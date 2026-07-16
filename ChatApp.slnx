@@ -1,5 +1,6 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/ChatClient.Web/ChatClient.Web.csproj" />
     <Project Path="src/ChatClient/ChatClient.csproj" />
     <Project Path="src/ChatServer/ChatServer.csproj" />
     <Project Path="src/Shared/Shared.csproj" />
