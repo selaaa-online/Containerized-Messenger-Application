@@ -5,6 +5,8 @@ A simple, multi-client chat system built with **C# / .NET 8** using **low-level 
 communicate over a Docker bridge network, with chat history persisted in **PostgreSQL**
 via **EF Core (code-first)**.
 
+![Chat application demo](docs/demo.gif)
+
 ---
 
 ## Features
