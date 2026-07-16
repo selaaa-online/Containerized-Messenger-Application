@@ -168,6 +168,25 @@ dotnet ef migrations add <Name> --project src/ChatServer --startup-project src/C
 
 ---
 
+## Running the tests
+
+The solution ships with xUnit test projects under `tests/` covering the shared protocol,
+the server (auth, password hashing, logging, and full loopback integration of `ChatHost`),
+and the client (config plus a loopback `ChatSession`). The server tests use the EF Core
+in-memory provider, so **no database or Docker is required**.
+
+Run the whole suite from the repository root:
+```powershell
+dotnet test ChatApp.slnx
+```
+
+Run a single project, e.g. only the server tests:
+```powershell
+dotnet test tests/ChatServer.Tests
+```
+
+---
+
 ## Design decisions & trade-offs
 
 - **Sockets, not frameworks.** The transport is raw `TcpListener` / `TcpClient` with a
