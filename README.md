@@ -173,10 +173,11 @@ dotnet ef migrations add <Name> --project src/ChatServer --startup-project src/C
   programming" requirement.
 - **Newline-delimited JSON.** Chosen over a fixed binary protocol for readability and
   easy extensibility. Framing by `\n` avoids partial-message issues from TCP's stream nature.
-- **Task-per-connection concurrency.** Each client runs on its own async task; the shared
-  client registry is a `ConcurrentDictionary`, and outbound writes are serialized per
-  connection via a semaphore in `MessageChannel`. This keeps the concurrency model simple
-  and safe without manual locking around the socket.
+- **Task-per-connection concurrency.** Each client runs on its own async task over the
+  thread pool (see the *Concurrency model* section above); the shared client registry is a
+  `ConcurrentDictionary`, and outbound writes are serialized per connection via a semaphore
+  in `MessageChannel`. This keeps the concurrency model simple and safe without manual
+  locking around the socket.
 - **Short-lived DbContexts.** A lightweight `IDbContextFactory` creates a fresh
   `ChatDbContext` per operation, which is the recommended pattern for concurrent access
   and avoids sharing a context across threads.
@@ -189,11 +190,49 @@ dotnet ef migrations add <Name> --project src/ChatServer --startup-project src/C
 - **Dual logging.** Messages go to both a file (quick inspection, requirement) and the
   database (durable, queryable — the persistence bonus).
 
+- Concurrency model (how "multi-threaded" is achieved)
+
+  The server handles many clients **concurrently across multiple threads**, but it does so
+  using .NET's **task-based asynchronous model over the thread pool** rather than a dedicated
+  OS thread per client.
+
+  - The accept loop (`await AcceptTcpClientAsync`) spawns an independent `Task`
+  (`HandleClientAsync`) for every connection — see [ChatHost.cs](src/ChatServer/Server/ChatHost.cs).
+
+  - While a connection waits for the next message (`await channel.ReadAsync(...)`), the method
+    **suspends and releases its thread back to the thread pool** instead of blocking it. When
+    data arrives, the continuation resumes on any available pool thread (backed by OS I/O
+    completion ports).
+
+  - Concurrent shared state is therefore accessed from multiple threads and is protected
+    accordingly: the connected-client registry is a `ConcurrentDictionary`, and per-connection
+    writes are serialized with a `SemaphoreSlim` in [MessageChannel.cs](src/Shared/MessageChannel.cs).
+
+  **Why this instead of `new Thread(...)` per client?** A thread-per-client design pins one OS
+  thread (≈1 MB stack) to each connection, most of which sits blocked on a synchronous read.
+  The async model services thousands of connections with a small pool of threads proportional
+  to the CPU count, giving the same concurrency with far lower memory and context-switching
+  overhead. It is the idiomatic, recommended approach for scalable socket servers in modern
+  .NET. Functionally it is genuinely multi-threaded — message handling for different clients
+  runs in parallel on different threads — it simply does not waste a dedicated thread per idle
+  socket.
+
+| Aspect                  | Thread-per-client             | **This project** (async + thread pool) |
+| ----------------------  | ----------------------------  | -------------------------------------- |
+| Threads for _N_ clients | `N` — one dedicated per client| Small shared pool (~CPU cores)         |
+| While waiting for I/O   | Thread **blocked** on read    | Thread **returned to the pool**        |
+| Memory per idle client  | ~1 MB thread stack            | A few KB of state                      |
+| Context switching       | High under load               | Minimal                                |
+| Scalability             | Limited (hundreds)            | High (thousands)                       |
+
 ## Assumptions
 
+- Implementation mainly backend centric + chat interactivity via CLI 
+- Out of scope client centric UI 
 - Usernames are unique and case-insensitive; a user may only be connected once at a time.
 - Any username/password is accepted on first use (self-service registration) for demo ease.
 - Private messages are delivered only when the recipient is currently online.
 - Console rendering is line-based; inbound messages may interleave with what a user is
   typing (acceptable for a plain console client, as specified).
 - The PostgreSQL credentials in `docker-compose.yml` are for local/demo use only.
+
