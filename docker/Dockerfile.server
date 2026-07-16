@@ -1,0 +1,24 @@
+# ---- Build stage ----
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+WORKDIR /src
+
+# Restore first (better layer caching) using only project files.
+COPY src/Shared/Shared.csproj src/Shared/
+COPY src/ChatServer/ChatServer.csproj src/ChatServer/
+RUN dotnet restore src/ChatServer/ChatServer.csproj
+
+# Copy the rest of the source and publish.
+COPY src/ src/
+RUN dotnet publish src/ChatServer/ChatServer.csproj -c Release -o /app --no-restore
+
+# ---- Runtime stage ----
+FROM mcr.microsoft.com/dotnet/runtime:8.0 AS runtime
+WORKDIR /app
+COPY --from=build /app ./
+
+# Default configuration (overridable via docker-compose / environment).
+ENV SERVER_PORT=9000 \
+    LOG_FILE_PATH=/app/logs/chat.log
+
+EXPOSE 9000
+ENTRYPOINT ["dotnet", "ChatServer.dll"]

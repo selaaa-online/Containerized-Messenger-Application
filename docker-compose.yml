@@ -1,0 +1,69 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: chat-postgres
+    environment:
+      POSTGRES_DB: chatdb
+      POSTGRES_USER: chat
+      POSTGRES_PASSWORD: chatpassword
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      # Host 55432 -> container 5432, so external tools (e.g. DBeaver) can connect.
+      # (5433 is avoided because a native PostgreSQL already uses it on this host.)
+      # The server container still talks to 'postgres:5432' over the internal network.
+      - "55432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chat -d chatdb"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - chatnet
+
+  server:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.server
+    container_name: chat-server
+    environment:
+      SERVER_PORT: 9000
+      LOG_FILE_PATH: /app/logs/chat.log
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: chatdb
+      POSTGRES_USER: chat
+      POSTGRES_PASSWORD: chatpassword
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "9000:9000"
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - chatnet
+
+  # Interactive client. Launch with:
+  #   docker compose run --rm client
+  # (each invocation prompts for its own username/password).
+  client:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.client
+    environment:
+      SERVER_HOST: server
+      SERVER_PORT: 9000
+    depends_on:
+      - server
+    stdin_open: true
+    tty: true
+    networks:
+      - chatnet
+
+volumes:
+  pgdata:
+
+networks:
+  chatnet:
+    driver: bridge
