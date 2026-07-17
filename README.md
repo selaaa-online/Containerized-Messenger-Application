@@ -29,7 +29,7 @@ via **EF Core (code-first)**.
 | Online user list (`/list`) | Extra | ✅ |
 | Blazor web UI client | Extra | ✅ |
 | Automated unit & integration tests (xUnit) | Extra | ✅ |
-| Azure deployment | Extra | ⏳ |
+| Azure deployment (Container Apps, Bicep IaC) | Extra | ✅ |
 
 ### Highlevel architecture
 
@@ -139,7 +139,12 @@ chat-application/
 │   └── ChatClient.Tests/  # Client config and ChatSession (loopback)
 ├── docker/
 │   ├── Dockerfile.server
-│   └── Dockerfile.client
+│   ├── Dockerfile.client
+│   └── Dockerfile.web     # Blazor web UI image (for Azure)
+├── infra/                 # Azure deployment (Container Apps)
+│   ├── main.bicep         # ACR, PostgreSQL, Log Analytics, storage, Container App
+│   ├── main.parameters.json
+│   └── deploy.ps1         # Two-pass deploy (builds images via 'az acr build')
 ├── docker-compose.yml     # postgres + server + client services on one network
 └── README.md
 ```
@@ -330,6 +335,12 @@ dotnet test tests/ChatServer.Tests
   health check).
 - **Dual logging.** Messages go to both a file (quick inspection, requirement) and the
   database (durable, queryable — the persistence bonus).
+- **Azure Container Apps over AKS.** For the cloud deployment, ACA runs the existing Docker
+  images as a managed serverless container service — no Kubernetes cluster to operate. The
+  server and web are co-located in one replica so they communicate over `localhost`, avoiding
+  the need to expose the raw TCP server publicly; the web UI is the only public endpoint. AKS
+  would offer more control (e.g. a `LoadBalancer` service for raw TCP) at a much higher
+  operational cost — overkill for this app.
 
 - Concurrency model (how "multi-threaded" is achieved)
 
@@ -358,13 +369,13 @@ dotnet test tests/ChatServer.Tests
   runs in parallel on different threads — it simply does not waste a dedicated thread per idle
   socket.
 
-| Aspect                  | Thread-per-client             | **This project** (async + thread pool) |
-| ----------------------  | ----------------------------  | -------------------------------------- |
-| Threads for _N_ clients | `N` — one dedicated per client| Small shared pool (~CPU cores)         |
-| While waiting for I/O   | Thread **blocked** on read    | Thread **returned to the pool**        |
-| Memory per idle client  | ~1 MB thread stack            | A few KB of state                      |
-| Context switching       | High under load               | Minimal                                |
-| Scalability             | Limited (hundreds)            | High (thousands)                       |
+        | Aspect                  | Thread-per-client             | **This project** (async + thread pool) |
+        | ----------------------  | ----------------------------  | -------------------------------------- |
+        | Threads for _N_ clients | `N` — one dedicated per client| Small shared pool (~CPU cores)         |
+        | While waiting for I/O   | Thread **blocked** on read    | Thread **returned to the pool**        |
+        | Memory per idle client  | ~1 MB thread stack            | A few KB of state                      |
+        | Context switching       | High under load               | Minimal                                |
+        | Scalability             | Limited (hundreds)            | High (thousands)                       |
 
 ## Assumptions
 
