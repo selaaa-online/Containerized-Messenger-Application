@@ -187,6 +187,12 @@ while remaining structured and easy to debug.
 
 ## Build & run with Docker Compose
 
+
+Pre-requisites : 
+  - Docker desktop installed
+  - .NET SDK 8 installed with runtime hosting bundles
+  - clone the repository and navigate to respective directory and follow the below steps.
+
 ### 1. Build the solution
 ```powershell
 docker compose build
