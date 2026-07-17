@@ -1,6 +1,6 @@
-# Containerized Chat Application
+# Containerized Messenger Application
 
-A simple, multi-client chat system built with **C# / .NET 8** using **low-level TCP sockets**
+A simple, multi-client messaging platform built with **C# / .NET 8** using **low-level TCP sockets**
 (`System.Net.Sockets`). The server and clients run as separate Docker containers and
 communicate over a Docker bridge network, with chat history persisted in **PostgreSQL**
 via **EF Core (code-first)**.
@@ -11,7 +11,95 @@ via **EF Core (code-first)**.
 
 ## Features
 
+| Feature | Category | Status |
+|---------|----------|:------:|
+| Multi-threaded socket server (task-per-connection) | Required | ✅ |
+| Broadcast messaging to all connected clients | Required | ✅ |
+| Timestamped logging to file | Required | ✅ |
+| Graceful client disconnect handling | Required | ✅ |
+| Client auto-reconnect with exponential backoff | Required | ✅ |
+| Configurable host/port via environment variables | Required | ✅ |
+| Dockerized server & client | Required | ✅ |
+| Docker Compose multi-container orchestration | Required | ✅ |
+| Docker DNS service-name resolution | Required | ✅ |
+| Authentication (username + password, PBKDF2) | Bonus | ✅ |
+| Auto-registration of new users | Bonus | ✅ |
+| Private messaging (`/msg <user> <text>`) | Bonus | ✅ |
+| Persistent storage in PostgreSQL (EF Core code-first) | Bonus | ✅ |
+| Online user list (`/list`) | Extra | ✅ |
+| Blazor web UI client | Extra | ✅ |
+| Automated unit & integration tests (xUnit) | Extra | ✅ |
+| Azure deployment | Extra | ⏳ |
+
+### Highlevel architecture
+
+```mermaid
+flowchart LR
+    subgraph Clients
+        C1["Chat Client"]
+        C2["Chat Client"]
+    end
+
+    S["Chat Server\n(TCP :9000)"]
+    DB[("PostgreSQL")]
+    L["chat.log"]
+
+    C1 <-->|TCP messages| S
+    C2 <-->|TCP messages| S
+    S -->|store users & messages| DB
+    S -->|append log| L
+```
+
+- **Clients** connect over TCP and exchange messages through the server.
+- **Server** broadcasts messages to all clients and handles private messages.
+- **PostgreSQL** persists users and chat history.
+- **chat.log** keeps a timestamped file log.
+
+#### Container & component architecture
+
+```mermaid
+flowchart TB
+    subgraph clients["Client containers / processes"]
+        CON["ChatClient (console)\nProgram.cs → ChatSession"]
+        WEB["ChatClient.Web (Blazor)\nChatConnection service"]
+    end
+
+    subgraph net["Docker bridge network: chatnet"]
+        subgraph server["chat-server container"]
+            direction TB
+            LISTEN["ChatHost\nTcpListener :9000 accept loop"]
+            MC["MessageChannel\nnewline-framed JSON"]
+            AUTH["AuthService\n+ PasswordHasher (PBKDF2)"]
+            REG["ConcurrentDictionary&lt;user, ConnectedClient&gt;\nonline registry"]
+            LOG["MessageLogger\nfile + DB sinks"]
+            LISTEN --> MC
+            MC --> AUTH
+            MC --> REG
+            REG --> LOG
+        end
+
+        subgraph db["chat-postgres container"]
+            PG[("PostgreSQL\nUsers, ChatLogs")]
+        end
+    end
+
+    FILE["logs/chat.log\n(host bind mount)"]
+
+    CON <-->|"TCP :9000 (DNS: 'server')"| LISTEN
+    WEB <-->|"TCP :9000"| LISTEN
+    AUTH <-->|"EF Core"| PG
+    LOG -->|"EF Core insert"| PG
+    LOG -->|"append"| FILE
+```
+
+- **Clients** — a console client and a Blazor web client, both speaking the same newline-framed JSON protocol.
+- **ChatHost** — accepts connections, authenticates them, and maintains the in-memory online registry.
+- **MessageChannel** — frames and serializes messages over the TCP stream.
+- **MessageLogger** — writes every chat message to both PostgreSQL and the bind-mounted `chat.log` file.
+
+
 ### Core requirements
+
 - **Multi-threaded socket server** — accepts many simultaneous clients, each handled on its own asynchronous task.
 - **Broadcast messaging** — messages from any client are relayed to all connected clients.
 - **Timestamped logging** — every message is written to a log file (`logs/chat.log`) *and* to PostgreSQL.
@@ -21,9 +109,11 @@ via **EF Core (code-first)**.
 - **Docker DNS resolution** — clients reach the server by its Compose service name (`server`).
 
 ### Bonus features (all implemented)
+
 - **Authentication** — clients must supply a username + password. Unknown users are auto-registered; known users are verified against a PBKDF2-hashed password.
-- **Private messaging** — `/msg <user> <text>` delivers a direct message to a single online user. Use `/list` to list who is currently online.
+- **Private messaging** — `/msg <user> <text>` delivers a direct message to a single online user.
 - **Persistent storage** — users and all chat messages are stored in PostgreSQL using EF Core code-first migrations.
+- **Online users** — Use `/list` to list users who are currently online.
 
 ---
 
@@ -38,7 +128,15 @@ chat-application/
 │   │   ├── Data/          # Entities, DbContext, migrations, factories
 │   │   ├── Logging/       # MessageLogger (file + database)
 │   │   └── Server/        # ChatHost (accept loop, broadcast, private routing)
-│   └── ChatClient/        # Console client with auto-reconnect
+│   ├── ChatClient/        # Console client with auto-reconnect
+│   └── ChatClient.Web/    # Blazor web UI client
+│       ├── Components/    # Razor components (App, Routes, Layout, Pages)
+│       ├── Services/      # ChatConnection (TCP bridge to the server)
+│       └── wwwroot/       # Static assets (app.css)
+├── tests/
+│   ├── Shared.Tests/      # Protocol: Message, MessageChannel (loopback)
+│   ├── ChatServer.Tests/  # Auth, password hashing, logging, ChatHost integration
+│   └── ChatClient.Tests/  # Client config and ChatSession (loopback)
 ├── docker/
 │   ├── Dockerfile.server
 │   └── Dockerfile.client
@@ -106,7 +204,7 @@ You can follow server logs with:
 docker compose logs -f server
 ```
 
-### 3. Start one or more clients
+### 3. Start one or more clients - CLI based approach
 Open a **separate terminal for each client** and run:
 ```powershell
 docker compose run --rm client
@@ -117,12 +215,28 @@ automatically). Repeat in additional terminals to simulate multiple participants
 > Using `docker compose run` (rather than `up`) gives each client its own interactive
 > terminal, which is what a console chat client needs.
 
-### 4. Chat
+### 4. (Optional) Start the web UI client - UI based approach
+The Blazor web client (`ChatClient.Web`) offers a browser-based alternative to the console
+client. It runs locally and connects to the server that Compose already published on
+`localhost:9000`, so no extra container is required — just the .NET 8 SDK.
+
+```powershell
+dotnet run --project src/ChatClient.Web
+```
+Then open **http://localhost:5080** in your browser, log in with any username/password, and
+start chatting. Open the page in multiple browser tabs (or alongside a console client) to see
+real-time broadcast and private messaging across all participants.
+
+> The UI reads `SERVER_HOST` / `SERVER_PORT` (defaults `localhost` / `9000`). Override them if
+> your server runs elsewhere, e.g. `$env:SERVER_HOST="localhost"; $env:SERVER_PORT="9000"`.
+
+### 5. Chat
 - Type a message and press **Enter** to broadcast it to everyone.
+- List: `/list` : List down all online users
 - Send a private message: `/msg <username> <message>`
 - Quit: `/quit`
 
-### 5. Shut down
+### 6. Shut down
 ```powershell
 docker compose down          # stop containers
 docker compose down -v       # also remove the PostgreSQL volume
@@ -249,7 +363,7 @@ dotnet test tests/ChatServer.Tests
 ## Assumptions
 
 - Implementation mainly backend centric + chat interactivity via CLI 
-- Out of scope client centric UI 
+- Out of scope client centric UI (created mainly for presentational use)
 - Usernames are unique and case-insensitive; a user may only be connected once at a time.
 - Any username/password is accepted on first use (self-service registration) for demo ease.
 - Private messages are delivered only when the recipient is currently online.
