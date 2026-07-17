@@ -1,0 +1,187 @@
+@page "/"
+@rendermode InteractiveServer
+@implements IDisposable
+@inject ChatConnection Connection
+@inject IConfiguration Config
+
+<PageTitle>Chat Client</PageTitle>
+
+@if (!Connection.IsConnected)
+{
+    <div class="login-card">
+        <h1>Join the chat</h1>
+        <p class="hint">New users are registered automatically on first login.</p>
+
+        @if (_error is not null)
+        {
+            <p class="error">@_error</p>
+        }
+
+        <label>
+            <span>Server host</span>
+            <input @bind="_host" @bind:event="oninput" />
+        </label>
+        <label>
+            <span>Server port</span>
+            <input type="number" @bind="_port" @bind:event="oninput" />
+        </label>
+        <label>
+            <span>Username</span>
+            <input @bind="_username" @bind:event="oninput" @onkeydown="OnLoginKey" />
+        </label>
+        <label>
+            <span>Password</span>
+            <input type="password" @bind="_password" @bind:event="oninput" @onkeydown="OnLoginKey" />
+        </label>
+
+        <button class="primary" @onclick="ConnectAsync" disabled="@_connecting">
+            @(_connecting ? "Connecting..." : "Connect")
+        </button>
+    </div>
+}
+else
+{
+    <div class="chat-shell">
+        <header class="chat-header">
+            <div>
+                <strong>@Connection.Username</strong>
+                <span class="badge">online</span>
+            </div>
+            <button class="secondary" @onclick="DisconnectAsync">Disconnect</button>
+        </header>
+
+        <div class="chat-body">
+            <section class="messages">
+                @if (!Connection.Messages.Any())
+                {
+                    <div class="empty">No messages yet — say hello!</div>
+                }
+                @foreach (var entry in Connection.Messages)
+                {
+                    <div class="entry @entry.Kind.ToString().ToLowerInvariant()">
+                        <span class="time">@entry.Timestamp.ToString("HH:mm:ss")</span>
+                        <span class="text">@entry.Text</span>
+                    </div>
+                }
+            </section>
+
+            <aside class="roster">
+                <div class="roster-head">
+                    <strong>Online (@Connection.OnlineUsers.Count)</strong>
+                    <button class="link" @onclick="RefreshUsersAsync">refresh</button>
+                </div>
+                <ul>
+                    @foreach (var user in Connection.OnlineUsers)
+                    {
+                        <li class="@(user == Connection.Username ? "self" : "")">
+                            <button class="link" @onclick="() => SetRecipient(user)"
+                                    disabled="@(user == Connection.Username)">
+                                @user
+                            </button>
+                        </li>
+                    }
+                </ul>
+            </aside>
+        </div>
+
+        <footer class="composer">
+            <select @bind="_recipient">
+                <option value="">Everyone</option>
+                @foreach (var user in Connection.OnlineUsers.Where(u => u != Connection.Username))
+                {
+                    <option value="@user">@user</option>
+                }
+            </select>
+            <input class="draft" placeholder="Type a message and press Enter..."
+                   @bind="_draft" @bind:event="oninput" @onkeydown="OnDraftKey" />
+            <button class="primary" @onclick="SendAsync">Send</button>
+        </footer>
+    </div>
+}
+
+@code {
+    private string _host = "localhost";
+    private int _port = 9000;
+    private string _username = string.Empty;
+    private string _password = string.Empty;
+    private string _draft = string.Empty;
+    private string _recipient = string.Empty;
+    private string? _error;
+    private bool _connecting;
+
+    protected override void OnInitialized()
+    {
+        _host = Config["SERVER_HOST"] ?? "localhost";
+        if (int.TryParse(Config["SERVER_PORT"], out var port))
+        {
+            _port = port;
+        }
+
+        Connection.Changed += OnChanged;
+    }
+
+    private void OnChanged() => InvokeAsync(StateHasChanged);
+
+    private async Task ConnectAsync()
+    {
+        if (_connecting)
+        {
+            return;
+        }
+
+        _error = null;
+        _connecting = true;
+        _error = await Connection.ConnectAsync(_host, _port, _username, _password);
+        _connecting = false;
+    }
+
+    private async Task OnLoginKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+        {
+            await ConnectAsync();
+        }
+    }
+
+    private async Task OnDraftKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+        {
+            await SendAsync();
+        }
+    }
+
+    private async Task SendAsync()
+    {
+        var text = _draft?.Trim();
+        if (string.IsNullOrEmpty(text))
+        {
+            return;
+        }
+
+        if (string.IsNullOrEmpty(_recipient))
+        {
+            await Connection.SendChatAsync(text);
+        }
+        else
+        {
+            await Connection.SendPrivateAsync(_recipient, text);
+        }
+
+        _draft = string.Empty;
+    }
+
+    private void SetRecipient(string user)
+    {
+        if (user != Connection.Username)
+        {
+            _recipient = user;
+        }
+    }
+
+    private Task RefreshUsersAsync() => Connection.RequestUserListAsync();
+
+    private Task DisconnectAsync() => Connection.DisconnectAsync();
+
+    public void Dispose() => Connection.Changed -= OnChanged;
+}
