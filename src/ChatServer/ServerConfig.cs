@@ -20,7 +20,24 @@ public static class ServerConfig
     private static string DbUser => Environment.GetEnvironmentVariable("POSTGRES_USER") ?? "chat";
     private static string DbPassword => Environment.GetEnvironmentVariable("POSTGRES_PASSWORD") ?? "chatpassword";
 
+    // Optional TLS mode for managed providers (e.g. Azure requires SSL). When unset,
+    // the connection string omits SSL settings and Npgsql uses its defaults.
+    private static string? DbSslMode => Environment.GetEnvironmentVariable("POSTGRES_SSL_MODE");
+
     /// <summary>Builds the Npgsql connection string from the configured settings.</summary>
-    public static string ConnectionString =>
-        $"Host={DbHost};Port={DbPort};Database={DbName};Username={DbUser};Password={DbPassword}";
+    public static string ConnectionString
+    {
+        get
+        {
+            var connectionString =
+                $"Host={DbHost};Port={DbPort};Database={DbName};Username={DbUser};Password={DbPassword}";
+
+            if (!string.IsNullOrWhiteSpace(DbSslMode))
+            {
+                connectionString += $";SSL Mode={DbSslMode};Trust Server Certificate=true";
+            }
+
+            return connectionString;
+        }
+    }
 }
