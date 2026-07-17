@@ -5,6 +5,8 @@ A simple, multi-client messaging platform built with **C# / .NET 8** using **low
 communicate over a Docker bridge network, with chat history persisted in **PostgreSQL**
 via **EF Core (code-first)**.
 
+Demo URL : https://chatapp.purplesmoke-0b43abd4.northeurope.azurecontainerapps.io/
+
 ![Chat application demo](docs/demo.gif)
 
 ---
