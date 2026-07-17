@@ -1,0 +1,26 @@
+# ---- Build stage ----
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+WORKDIR /src
+
+# Restore first (better layer caching) using only project files.
+COPY src/Shared/Shared.csproj src/Shared/
+COPY src/ChatClient.Web/ChatClient.Web.csproj src/ChatClient.Web/
+RUN dotnet restore src/ChatClient.Web/ChatClient.Web.csproj
+
+# Copy the rest of the source and publish.
+COPY src/ src/
+RUN dotnet publish src/ChatClient.Web/ChatClient.Web.csproj -c Release -o /app --no-restore
+
+# ---- Runtime stage ----
+FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
+WORKDIR /app
+COPY --from=build /app ./
+
+# Default configuration (overridable via Container Apps / environment).
+# ASPNETCORE_HTTP_PORTS makes Kestrel listen on 8080, which the ingress targets.
+ENV SERVER_HOST=server \
+    SERVER_PORT=9000 \
+    ASPNETCORE_HTTP_PORTS=8080
+
+EXPOSE 8080
+ENTRYPOINT ["dotnet", "ChatClient.Web.dll"]
